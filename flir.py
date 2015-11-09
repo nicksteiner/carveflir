@@ -1,20 +1,13 @@
+from __future__ import print_function
 
 __author__ = 'Nick Steiner'
 __version__ = "1r0"
 __email__ = "nsteiner@ccny.cuny.edu"
 
 """
-
 FLIR Library Processing
-
-
-
-
 """
 
-
-
-from __future__ import print_function
 
 import os
 import sys
@@ -29,7 +22,7 @@ from optparse import OptionParser
 import numpy as np
 from pandas import DataFrame, to_datetime
 from netCDF4 import Dataset
-from sqlalchemy import types, Column, MetaData, engine, orm, ForeignKey
+from sqlalchemy import types, Column, MetaData, engine, orm, ForeignKey, and_
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 
@@ -78,11 +71,7 @@ metadata = MetaData(bind=ee)
 Session = sessionmaker(bind=ee)
 Base = declarative_base(metadata=metadata)
 
-
-
 _kml_dir = os.path.join(_PATH, 'kml') # (? Moved ?)
-
-#DISTANCE = vincenty.distance
 
 
 '''
@@ -94,8 +83,10 @@ Misc. Time Functions
 _dt_frompath = lambda x: datetime.datetime.strptime(os.path.split(x)[-1], '%Y%m%d').date()
 _dt_parse = lambda x: datetime.datetime.strptime(x, '%Y%j:%H:%M:%S.%f')
 TS2DT = lambda x: datetime.datetime.strptime(x, '%Y-%m-%dT%H:%M:%S.%fZ')
+
 FLOAT_TIME_OFFSET = np.array(['1980-01-06T00:00:00+0000'], dtype='datetime64[s]').astype('double')
 DADS_TIME_OFFSET = np.array(['1980-01-06'], dtype='datetime64[D]')
+DF2DADS = lambda index: np.array(index, dtype='datetime64[us]').astype('datetime64[s]').astype('double') - FLOAT_TIME_OFFSET
 
 '''
 ----------------------------------
@@ -157,16 +148,6 @@ def get_flir():
         return Flir(session)
 
 
-def get_flightid():
-    """
-
-
-    :return: flight id
-    """
-    with session_scope() as session:
-        results = session.query(Flight.FlightID).all()
-        session.expunge_all()
-    return results
 
 def get_all_flightdates():
     """
@@ -179,21 +160,19 @@ def get_all_flightdates():
         session.expunge_all()
     return results
 
-def get_flightid_bydate(date_obj):
-    with session_scope() as session:
-        results = session.query(Flight.FlightID).filter(Flight.StartDate == date_obj).first()
-        session.expunge_all()
-    if results:
-        results = results[0]
-    else:
-        print(date_obj)
-    return results
-
 
 def get_records_byflightid(flight_id):
     with session_scope() as session:
         results = session.query(Record).join(Flight).filter(Flight.FlightID == flight_id). \
             order_by(Record.FlightDate).all()
+        session.expunge_all()
+    return results
+
+def get_flight_bytime(start_time):
+    with session_scope() as session:
+        results = session.query(Flight).filter(and_(
+                Flight.StartDateTime <= start_time,
+                Flight.EndDateTime >= start_time)).first()
         session.expunge_all()
     return results
 
@@ -207,6 +186,28 @@ def get_flight_byflightid(flight_id):
 
 def get_flight_bydate(date_obj):
     return get_flight_byflightid(get_flightid_bydate(date_obj))
+
+
+def get_flightid_bydate(date_obj):
+    with session_scope() as session:
+        results = session.query(Flight.FlightID).filter(Flight.StartDate == date_obj).first()
+        session.expunge_all()
+    if results:
+        results = results[0]
+    else:
+        print(date_obj)
+    return results
+
+def get_flightid():
+    """
+
+
+    :return: flight id
+    """
+    with session_scope() as session:
+        results = session.query(Flight.FlightID).all()
+        session.expunge_all()
+    return results
 
 
 def read_dads_data(dads_file, variable_definitions):
@@ -227,8 +228,6 @@ def dump_flir_dates():
         pickle.dump(flir_list, file)
 
 
-
-
 '''
 ----------------------------------
 FLIR Data Classes
@@ -237,18 +236,19 @@ FLIR Data Classes
 
 
 class Flir(object):
-    def __init__(self, session):
+    def __init__(self, session=None):
 
         """
         Should initialize with OCR objects from file. Flights --> Records
 
+        :type session: orm session, if None Flir only finds local files
         """
         # set file lists
         self.record_file_list = 'sfmov'
         self.dad_file_list = 'nc'
-        self.flight_list = session
-        self.record_list = session
-        #return
+        if session:
+            self.flight_list = session
+            self.record_list = session
 
     @property
     def record_file_list(self):
@@ -322,7 +322,7 @@ class Flir(object):
         return datetime.datetime.strptime(str(year) + date_str, '%Y%j:%H:%M:%S.%f')
 
 
-LOAD_ON_INIT = True
+LOAD_ON_INIT = False
 
 class Flight(Base):
     __tablename__ = 'flight'
@@ -379,11 +379,12 @@ class Flight(Base):
     def load(self):
         self.data_array = self.file_path
         self.set_geolocation()
+        #self.record_list = get_records_bytime(self.StartDateTime, self.EndDateTime)
         self.record_list = get_records_byflightid(self.FlightID)
 
     @property
     def file_path(self):
-        return os.path.join(_PATH, 'dat', 'dads', self.StartDate.strftime('%Y%m%d'), self.FlightID + '.nc')
+        return os.path.join(_PATH, 'dat', 'dads', self.FlightID + '.nc')
 
     @staticmethod
     def get_record_names(flight_date_str, flir_dat_path=FLIR_DAT_PATH):
@@ -432,38 +433,6 @@ class Flight(Base):
         geolocation_frame.index = index_
         self._geolocation = geolocation_frame
 
-    '''
-    # Interpolation Methods ( Not current)
-    @property
-    def location_frame(self):
-        if not hasattr(self, '_location_frame'):
-            dfs = []
-            nRec = len(self.record)
-            for pos, rec in enumerate(self.record):
-                dfs.append(rec.dads_frame)
-                print('Dataframe {}/{}'.format(pos, nRec))
-            self._location_frame = concat(dfs)
-        return self._location_frame
-
-    def _combine_record(self, record):
-        dad_df = self.dads.data_frame.resample('1000L')
-        return dad_df.join(record.data_frame).loc[
-               record.data_frame.index[0]:record.data_frame.index[-1]]
-
-    def _combine_record_nodata(self, record):
-        dad_df = self.dads.data_frame.resample('1000L')
-        start_ = record.data_frame_nodata.index[0]
-        end_ = record.data_frame_nodata.index[-1]
-        join_df = dad_df.join(record.data_frame_nodata)
-        if (start_ in join_df.index) and (end_ in join_df.index):
-            df = join_df.loc[start_:end_]
-        else:
-            df = None
-        return df
-
-    # Interpolation Methods
-    '''
-
     def parse_dads_time_str(self, time_str):
         return datetime.datetime.strptime(str(self.StartDate.year) + time_str, '%Y%j:%H:%M:%S.%f')
 
@@ -485,6 +454,7 @@ class Record(Base):
     __tablename__ = 'record'
 
     RecordName = Column(types.String, primary_key=True)
+    RecordFile = Column(types.String)
     FlightID = Column(types.String, ForeignKey("flight.FlightID"))
     FlightDate = Column(types.DateTime)
     # from sfmov file
@@ -544,6 +514,7 @@ class Record(Base):
     _pTnm = ('nfcTempC6_0', 'nfcTempC5_0', 'nfcTempC4_0', 'nfcTempC3_0', 'nfcTempC2_0', 'nfcTempC1_0', 'nfcTempC0_0')
 
     _movie_path = 'movie'
+    _reference_files = ('Include', 'REFile')
 
     def __init__(self, record_file, load=LOAD_ON_INIT):
 
@@ -554,16 +525,24 @@ class Record(Base):
         """
         self.RecordName = os.path.basename(record_file).rstrip('.sfmov')
         self.RecordFile = os.path.relpath(record_file)
-        record_metadata = Record.parse_record_file(record_file, SfmovMetadata())
-        self.set_record_metadata(record_metadata)
-        self.set_metadata_frames(record_file)
-        self.set_index()
+
+
         try:
             date_obj = datetime.datetime.strptime(os.path.split(os.path.dirname(record_file))[-1], '%Y%m%d').date()
             self.FlightDate = date_obj
-            self.FlightID = get_flightid_bydate(date_obj)
+            self.FlightID = get_flightid_bydate(date_obj) # first guess
         except:
             pass
+
+        record_metadata = Record.parse_record_file(record_file, SfmovMetadata())
+        self.set_record_metadata(record_metadata)
+        self.set_metadata()
+        self.set_index()
+
+        self.FlightDate = self.index[0].date()
+        self.FlightID = get_flight_bytime(self.index[0]).FlightID # final guess by
+
+
         if load:
             self.load_array()
 
@@ -571,6 +550,7 @@ class Record(Base):
     def init_on_load(self):
         self.set_metadata()
         self.set_index()
+        print ('Metadata parsed: {}'.format(self))
         if LOAD_ON_INIT:
             self.load_array()
 
@@ -586,8 +566,13 @@ class Record(Base):
         return self._index
 
     def set_index(self):
-        str2dt = lambda t: to_datetime(str(self.FlightDate.year) + t, format='%Y%j:%H:%M:%S.%f')
-        self._index = [str2dt(t) for t in self.reduce_frame.Time]
+        try:
+            assert hasattr(self, 'reduce_frame')
+            str2dt = lambda t: to_datetime(str(self.FlightDate.year) + t, format='%Y%j:%H:%M:%S.%f')
+            self._index = [str2dt(t) for t in self.reduce_frame.Time]
+        except:
+            print('reduce frame not found !!')
+            self._index = None
 
     @property
     def sfmov_file_path(self):
@@ -620,16 +605,16 @@ class Record(Base):
         return ','.join(record_files)
 
     def _gen_path(self, type_):
-        file_path = os.path.join(DAT_PATH, 'flir', self.FlightDate.strftime('%Y%m%d'))
+        file_path = os.path.join(_PATH, os.path.dirname(self.RecordFile))
         return os.path.join(file_path, '{}.{}'.format(self.RecordName, type_))
 
     def set_metadata(self):
         record_metadata = Record.parse_record_file(self.sfmov_file_path, SfmovMetadata())
-        if record_metadata.Include:
+        if hasattr(record_metadata, 'Include'):
             if os.path.exists(self.inc_file_path):
                 include_metadata = Record.parse_record_file(self.inc_file_path, IncludeMetadata())
                 self.set_record_metadata(include_metadata)
-        if record_metadata.REFile:
+        if hasattr(record_metadata, 'REFile'):
             if os.path.exists(self.pod_file_path):
                 reduce_metadata = Record.parse_record_file(self.pod_file_path, ReduceMetadata())
                 self.set_record_metadata(reduce_metadata)
@@ -652,12 +637,24 @@ class Record(Base):
             while True:
                 line = f.readline()
                 if line:
+
                     header_key, header_value_str, data_stop = Record.parse_header_line(line)
+                    ''' debugging
+                    # print(line)  #debugging
+                    if (header_key != 'Group') & (header_value_str is not None):
+                        if header_value_str.startswith('Rec-'):
+                            print(header_key)
+                        metadata_obj[header_key] = header_value_str
+                    '''
                     metadata_obj[header_key] = header_value_str
                 else:
                     break
                 if data_stop:
                     break
+        try:
+            del metadata_obj['Group']  # not valid metadata
+        except:
+            pass
         return metadata_obj
 
     def set_record_metadata(self, metadata_obj):
@@ -666,7 +663,8 @@ class Record(Base):
                 try:
                     setattr(self, attribute_name, metadata_obj[key])
                 except:
-                    print('No key in file: {}'.format(key))
+                    setattr(self, attribute_name, None)
+                    #print('No key in file: {}'.format(key))
 
     def __repr__(self):
         return '<FLIR-{};{}>'.format(self.name, self.RecordName)
@@ -785,21 +783,20 @@ class Record(Base):
             print('Flight Geolocation not set.')
             raise(e)
         flight_geo = flight.geolocation.copy()
+        # Check if record is within flight geolocation
         assert flight_geo.index[0] < self.index[0]
         assert flight_geo.index[-1] > self.index[-1]
         for i in self.index:
             flight_geo.loc[i] = np.nan
         flight_geo.sort_index(inplace=True)
         flight_geo.interpolate(method='time', inplace=True)
-        # debugging
-        '''
+        '''  debugging
         start_real = np.where(flight_geo.index == self.index[0])[0][0] - 1
         end_real = np.where(flight_geo.index == self.index[-1])[0][0] + 1
         ax = plt.subplot(111)
         flight.geolocation['height'][flight_geo.index[start_real]:flight_geo.index[end_real]].plot(ax=ax, style='ok')
         flight_geo['height'].loc[self.index[0]:self.index[-1]].plot(style='.r', ax=ax)
         '''
-        # debugging
         self._geolocation = flight_geo.loc[self.index]
 
 
@@ -921,11 +918,11 @@ class ReduceTypes(object):
         ('DigitalGain',         float),  #         0.996
         ('DigitalOffset',       float),  #       211.0
         ('DetectorType',        int),  #          0
-        ('AnalogOffset',        float),  #        0.000
-        ('MainBoardTemp',       float),  #       24.93
-        ('PowerBoardTemp',      float),  #      22.37
-        ('DigitizerBoardTemp',  float),  #  24.12
-        ('NUCFlagTemp',         float),  #         12.01
+        ('AnalogOffset',        float),  #          0.000
+        ('MainBoardTemp',       float),  #          24.93
+        ('PowerBoardTemp',      float),  #          22.37
+        ('DigitizerBoardTemp',  float),  #          24.12
+        ('NUCFlagTemp',         float),  #          12.01
         ('AnalogIn_1',          float),  #          0.007
         ('AnalogIn_2',          float),  #          0.002
         ('AnalogIn_3',          float),  #          0.006
@@ -953,23 +950,17 @@ NetCDF Writing
 '''
 
 
-class GeneralNetCDFFormat():
+class _GeneralNetCDFFormat():
     contact = 'Kyle McDonald'
     contact_email = 'kmcdonald2@ccny.cuny.edu'
     institution = 'The City College of the City University of New York',
-    source = 'remote airborne observation'
-    history = 'TBD',
-    references = 'TBD'
-    comment = 'TBD'
+    source = 'in situ airborne observation'
+    references = 'See associated README file.'
+    comment = 'See associated README file.'
+    Conventions = 'CF-1.6'
     instrument = 'FLIR SC8200; 25 mm lens [#23898-000]'
-    ancillary_file_source = 'TBD'
-    collection_label = 'TBD'
-    specification_name = 'TBD'
-    specification_version = 'TBD'
-    instrument = 'FLIR'
-    general_att_names = ('institution', 'source', 'history', 'references', 'comment', 'instrument',
-                         'ancillary_file_source', 'collection_label', 'specification_name',
-                         'specification_version', 'instrument')
+    general_att_names = ('institution', 'source', 'history', 'references', 'comment', 'Conventions', 'instrument',
+                         'instrument_full')
     file_ext = 'nc'
 
     @property
@@ -998,9 +989,21 @@ class GeneralNetCDFFormat():
     def file_name(self):
         return '{}.{}'.format(self.name, self.file_ext)
 
+    @property
+    def history(self):
+        args_ = ' '.join(sys.argv)
+        time_ = datetime.datetime.utcnow().isoformat()[:-3] + 'Z'
+        return '{}_{}'.format(time_, args_)
+
+
     def write(self):
         self.make_paths()
         with Dataset(self.file_path, 'w') as ncfile:
+        # must have a title or will raise error
+            try:
+                setattr(ncfile, 'title', getattr(self, 'title'))
+            except Exception as e:
+                raise(Exception('FLIR products must have a title!'))
             # write general attributes
             for key in self.general_att_names:
                 setattr(ncfile, key, getattr(self, key))
@@ -1016,6 +1019,8 @@ class GeneralNetCDFFormat():
             sci_group = self.write_science_measurement(ncfile)
         return sci_group, geo_group, dim_vars
 
+
+
     def make_paths(self):
         try:
             os.makedirs(self.folder)
@@ -1023,26 +1028,39 @@ class GeneralNetCDFFormat():
             pass
 
 
-class FLIR01A(GeneralNetCDFFormat):
-    long_name = 'FLIR Level 1A Radiance Counts at the Sensor'
-    short_name = 'FLIR01A'
-    processing_level = 'L1'
+class FLIR01A(_GeneralNetCDFFormat):
+    long_name = 'CARVE_FLIR01A'
+    short_name = 'FLIR_L1A'
+    processing_level = 'Level 1A'
     master_quality_flag = 'Good'
+    build_id = 'b23'
+    sampling_interval = "Grab"
+    frequency_of_sampling = "1 second - < 1 minute"
+    specification_name = "Carve Data Bible"
+    specification_version = "20150401"
+    collection_label = 'Production_B2.3_r01'
     description = 'Earth referenced radiance counts at the Sensor measured by the FLIR imaging camera'
-    title = 'FLIR Radiance Counts'
-    name_fmt = 'carve_{short_name}_{instrument}_{build_id}_{flight_date}_{record_number:02g}_{production_date_time}'
-    build_id = '1r0'
-    product_att_names = ('long_name', 'short_name', 'processing_level', 'master_quality_flag',
-                         'description', 'title', 'build_id')
+    title = 'CARVE FLIR Level 1A Radiance Counts at the Sensor'
+    #name_fmt = 'carve_{short_name}_{build_id}_{flight_date}_{record_number:06g}_{production_date_time}'
+
+    name_fmt = 'carve_{short_name}_{build_id}_{flight_date}_{record_number}_{production_date_time}'
+    algorithm_version = '1r0'
+
+    product_att_names = ('product_source','ancillary_file_source', 'collection_label',
+                         'data_start_time', 'data_stop_time', 'sampling_interval', 'frequency_of_sampling',
+                         'production_date_time','specification_name','specification_version','build_id',
+                         'long_name', 'short_name', 'processing_level', 'master_quality_flag', 'algorithm_version',
+                         'description')
 
     def __init__(self, record):
         self.record = record
-        self.record_number = sorted([r.RecordName for r in get_records_byflightid(record.FlightID)]).index(record.RecordName)
+        self.record_number = record.RecordName.lstrip('Rec-') #self.sorted([r.RecordName for r in get_records_byflightid(record.FlightID)]).index(record.RecordName)
         self.product_source = record.source_files
+        self.ancillary_file_source = r'NA'
         self.data_bounds = (record.index[0].to_datetime(), record.index[-1].to_datetime())
         self.data_start_time = self.data_bounds[0].strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
         self.data_stop_time = self.data_bounds[1].strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
-        self.production_date_time = datetime.datetime.utcnow().strftime('%Y%m%dT%H%M%S%z')
+        self.production_date_time = datetime.datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
         self.flight_date = self.data_bounds[0].strftime('%Y%m%d')
 
     def write_geolocation(self, ncfile, dim_vars):
@@ -1051,18 +1069,24 @@ class FLIR01A(GeneralNetCDFFormat):
         geo_data = self.record.geolocation.copy()
         geo_data['time_stamp'] = [g.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z' for g in self.record.index]
         times, rasters, scans = dim_vars
-        times[:] = np.array(geo_data.index, dtype='datetime64[us]').astype('int64')
+        # times match geolocation variables ???
+        times[:] = DF2DADS(geo_data.index)
+
         #TODO: add units to the dimension variables
-        times.units = 'microseconds since 1970-01-01T00:00:00.000000'
+        times.units = 'seconds since 1980-01-06T00:00:00.000000'
+
         for var_name in geo_data.columns:
             var_info = fliratt.geolocation_variables[var_name]
             att_ = fliratt.geolocation_attributes[var_name]
-            nc_var = geo_group.createVariable(var_name, var_info['data_type'], (var_info['dimension'], ), zlib=True)
-            # set the data
-            nc_var[:] = geo_data[var_name].values
-            # set the variables
-            for key, att_values in att_.iteritems():
-                setattr(nc_var, key, att_values)
+            #print(var_info['fill_value']) #  debug
+            nc_var = geo_group.createVariable(var_name, var_info['data_type'], (var_info['dimension'], ), zlib=True,
+                                              fill_value=var_info['fill_value'])
+            if '_error' not in var_name:
+                # set the data
+                nc_var[:] = geo_data[var_name].values
+                # set the variables
+                for key, att_values in att_.iteritems():
+                    setattr(nc_var, key, att_values)
         return geo_group
 
     def write_dimensions(self, ncfile):
@@ -1071,9 +1095,9 @@ class FLIR01A(GeneralNetCDFFormat):
         raster_dim = ncfile.createDimension('raster', 1024)
         scan_dim = ncfile.createDimension('scan', 1024)
         # create dimension variables
-        times = ncfile.createVariable("time", "int64", ("time",))
-        rasters = ncfile.createVariable('raster', 'int16', ('raster', ))
-        scans = ncfile.createVariable('scan', 'int16', ('scan', ))
+        times = ncfile.createVariable("time", "int64", ("time",), fill_value=255)
+        rasters = ncfile.createVariable('raster', 'int16', ('raster', ), fill_value=255)
+        scans = ncfile.createVariable('scan', 'int16', ('scan', ), fill_value=255)
         # set dimension variables
         rasters[:] = np.arange(1, 1024 + 1)
         scans[:] = np.arange(1, 1024 + 1)
@@ -1094,7 +1118,8 @@ class FLIR01A(GeneralNetCDFFormat):
         for var_name in var_dict:
             var_info = var_dict[var_name]
             att_ = att_dict[var_name]
-            nc_var = sc_group.createVariable(var_name, var_info['data_type'], var_info['dimension'], zlib=True)
+            nc_var = sc_group.createVariable(var_name, var_info['data_type'], var_info['dimension'],
+                                             zlib=True, fill_value=var_info['fill_value'])
             # set the data
             nc_var[:] = sc_data[var_name]
             # set the variables
@@ -1103,10 +1128,21 @@ class FLIR01A(GeneralNetCDFFormat):
         return sc_group
 
 
-def write_FLIR01A(overwrite=False):
-    for date_obj in get_all_flightdates():
-        flight_date = date_obj[0]
-        flight = get_flight_bydate(flight_date)
+def write_FLIR01A(overwrite=False, year=None, month=None, day=None):
+    for (date_obj,) in get_all_flightdates():
+        if year:
+            if date_obj.year != year:
+                continue
+            else:
+                if month:
+                    if date_obj.month != month:
+                        continue
+                    else:
+                        if day:
+                            if date_obj.day !=day:
+                                continue
+        flight = get_flight_bydate(date_obj)
+        flight.load()
         for record in flight.record_list:
             try:
                 print('Writing {}...'.format(record))
@@ -1124,6 +1160,9 @@ def write_FLIR01A(overwrite=False):
                 print('Failed {}...'.format(record_))
                 print(e)
 
+
+
+
 '''
 ----------------------------------
 Data Management
@@ -1134,76 +1173,65 @@ def write_database():
     metadata.drop_all()
     metadata.create_all()
     update_database()
-    for n in range(2):  # Second pass (?) forgot why
-        flir_ = get_flir()
-        for flight in flir_.dad_file_list:
-            with session_scope() as session:
-                try:
-                    print(flight)
-                    flight_obj = Flight(flight)
-                    session.merge(flight_obj)
-                    session.commit()
-                except Exception as e: # Should add some logging info
-                    print(Exception('error for : {}'.format(flight)))
-                    print(e)
-                    continue
-            print(flight)
-        for record in flir_.record_file_list:
-            with session_scope() as session:
-                try:
-                    record_obj = Record(record)
-                    session.merge(record_obj)
-                    session.commit()
-                except Exception as e:
-                    print(Exception('error for : {}'.format(record)))
-                    print(e)
-                    continue
-            print(record)
 
 def update_database():
-    for n in range(2):  # Second pass (?) forgot why
-        flir_ = get_flir()
-        for flight in flir_.dad_file_list:
-            with session_scope() as session:
-                try:
-                    print(flight)
-                    flight_obj = Flight(flight)
-                    session.merge(flight_obj)
-                    session.commit()
-                except Exception as e: # Should add some logging info
-                    print(Exception('error for : {}'.format(flight)))
-                    print(e)
-                    continue
-            print(flight)
-        for record in flir_.record_file_list:
-            with session_scope() as session:
-                try:
-                    record_obj = Record(record)
-                    session.merge(record_obj)
-                    session.commit()
-                except Exception as e:
-                    print(Exception('error for : {}'.format(record)))
-                    print(e)
-                    continue
-            print(record)
+    for n in range(2):  # Second pass to find all record-flights
+        update_flights()
+        update_records()
 
+def update_flights():
+    """
 
+    Update flights from local DADS .nc files.
+    """
+    flir_ = Flir()
+    for flight in flir_.dad_file_list:
+        with session_scope() as session:
+            try:
+                print(flight)
+                flight_obj = Flight(flight)
+                session.merge(flight_obj)
+                session.commit()
+            except Exception as e: # Should add some logging info
+                print(Exception('error for : {}'.format(flight)))
+                print(e)
+                continue
+        print(flight)
+
+def update_records():
+    """
+
+    Update records from local files.
+    """
+    flir_ = Flir()
+    for record in flir_.record_file_list:
+        with session_scope() as session:
+            try:
+                record_obj = Record(record)
+                session.merge(record_obj)
+                session.commit()
+                print('Record added: {}'.format(record_obj))
+            except Exception as e:
+                print(Exception('error for : {}'.format(record)))
+                print(e)
+                continue
+        print(record)
 
 def main():
     if opt.write_database:
         write_database()
     if opt.update_database:
-        pass
+        update_database()
     if opt.netcdf:
         if opt.product == 'L1A':
-            write_FLIR01A(opt.overwrite)
+            write_FLIR01A(overwrite=opt.overwrite, year=opt.year, month=opt.month, day=opt.day)
 
 
 if __name__ == '__main__':
     parser = OptionParser()
     parser.add_option("-u", "--update", dest="update_database", action='store_true',
                       help="Update the sqlite3 database", default=False)
-    parser.add_option("-n", "--netcdf", dest="netcdf", default=None,
+    parser.add_option("-n", "--netcdf", dest="netcdf", action='store_true', default=False,
                       help="write netcdf files")
     parser.add_option('-w', '--write_database', dest='write_database', default=False,
                       action='store_true', help="Write database from files, will delete all")
@@ -1211,6 +1239,13 @@ if __name__ == '__main__':
                       help="Product name, default is FLIR01A")
     parser.add_option('-o', '--overwrite', dest='overwrite', default=False,
                       action='store_true', help='Overwite netcdf products, default is update if not-exist')
+    parser.add_option('-Y', '--year', dest='year', default=None,
+                      type=int, help='define year to write')
+    parser.add_option('-M', '--month', dest='month', default=None,
+                      type=int, help='Restrict month to write, (year must be set)')
+    parser.add_option('-D', '--day', dest='day', default=None,
+                      type=int, help='Restrict day to write, (year+month must be set)')
+
     (opt, args) = parser.parse_args()
 
     sys.exit(main())

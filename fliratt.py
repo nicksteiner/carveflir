@@ -3,39 +3,39 @@ from collections import OrderedDict
 import numpy as np
 
 geolocation_variables = OrderedDict(**{
-     'center_lat':                  {'data_type': 'float',  'dimension': 'time'},
-     'center_lat_standard_error':   {'data_type': 'float',  'dimension': 'time'},
-     'center_lon':                  {'data_type': 'float',  'dimension': 'time'},
-     'center_lon_standard_error':   {'data_type': 'float',  'dimension': 'time'},
-     'geolocation_qc':              {'data_type': 'uint8',  'dimension': 'time'},
-     'heading':                     {'data_type': 'float',  'dimension': 'time'},
-     'heading_qc':                  {'data_type': 'uint8',  'dimension': 'time'},
-     'height':                      {'data_type': 'float',  'dimension': 'time'},
-     'height_standard_error':       {'data_type': 'float',  'dimension': 'time'},
-     'pitch':                       {'data_type': 'float',  'dimension': 'time'},
-     'pitch_qc':                    {'data_type': 'uint8',  'dimension': 'time'},
-     'roll':                        {'data_type': 'float',  'dimension': 'time'},
-     'roll_qc':                     {'data_type': 'uint8',  'dimension': 'time'},
-     'time':                        {'data_type': 'int64',  'dimension': 'time'},
-     'time_stamp':                  {'data_type': 'string', 'dimension': 'time'}})
+     'center_lat':                  {'data_type': 'single',  'dimension': 'time', 'fill_value': -999.9},
+     'center_lat_standard_error':   {'data_type': 'single',  'dimension': 'time', 'fill_value': -999.9},
+     'center_lon':                  {'data_type': 'single',  'dimension': 'time', 'fill_value': -999.9},
+     'center_lon_standard_error':   {'data_type': 'single',  'dimension': 'time', 'fill_value': -999.9},
+     'geolocation_qc':              {'data_type': 'uint8',  'dimension': 'time',  'fill_value': 255},
+     'heading':                     {'data_type': 'single',  'dimension': 'time', 'fill_value': -999.9},
+     'heading_qc':                  {'data_type': 'uint8',  'dimension': 'time',  'fill_value': 255},
+     'height':                      {'data_type': 'single',  'dimension': 'time', 'fill_value': -999.9},
+     'height_standard_error':       {'data_type': 'single',  'dimension': 'time', 'fill_value': -999.9},
+     'pitch':                       {'data_type': 'single',  'dimension': 'time', 'fill_value': -999.9},
+     'pitch_qc':                    {'data_type': 'uint8',  'dimension': 'time',  'fill_value': 255},
+     'roll':                        {'data_type': 'single',  'dimension': 'time', 'fill_value': -999.9},
+     'roll_qc':                     {'data_type': 'uint8',  'dimension': 'time',  'fill_value': 255},
+     'time':                        {'data_type': 'double',  'dimension': 'time', 'fill_value': -999.9},
+     'time_stamp':                  {'data_type': 'string', 'dimension':  'time',  'fill_value': None}})
 
 geolocation_attributes = OrderedDict(**{
-    'center_lat': {                'long_name': u'latitude_of_footprint_center',
+    'center_lat': {                'long_name': u'aircraft_center_latitude',
                                     'standard_name': u'latitude',
                                     'units': u'degrees_north',
                                     'valid_max': 90,
                                     'valid_min': -90},
-    'center_lat_standard_error': {  'long_name': u'uncertainly_of_center_latitude',
+    'center_lat_standard_error': {  'long_name': u'uncertainly_of_aircraft_center_latitude',
                                     'standard_name': u'latitude standard_error',
                                     'units': u'degrees_north',
                                     'valid_max': 90,
                                     'valid_min': 0},
-    'center_lon': {                 'long_name': u'longitude_of_footprint_center',
+    'center_lon': {                 'long_name': u'aircraft_center_longitude',
                                     'standard_name': u'longitude',
                                     'units': u'degrees_east',
                                     'valid_max': 180,
                                     'valid_min': -180},
-    'center_lon_standard_error': {  'long_name': u'uncertainly_of_center_longitude',
+    'center_lon_standard_error': {  'long_name': u'uncertainly_of_aircraft_center_longitude',
                                     'standard_name': u'longitude standard_error',
                                     'units': u'degrees_east',
                                     'valid_max': 90,
@@ -44,20 +44,21 @@ geolocation_attributes = OrderedDict(**{
                                     'flag_meanings': u'Success Error',
                                     'flag_values': np.array([0, 1], dtype='uint8'),
                                     'long_name': u'geolocation status'},
-    'height': {                     'long_name': u'height',
+    'height': {                     'long_name': u'aircraft_height',
                                     'positive': u'up',
                                     'standard_name': u'height',
                                     'units': u'meters',
                                     'valid_max': 10000,
                                     'valid_min': 0},
-    'height_standard_error': {      'long_name': u'uncertainty_of_height',
+    'height_standard_error': {      'long_name': u'uncertainty_of_aircraft_height',
                                     'standard_name': u'height standard_error',
                                     'units': u'meters',
                                     'valid_max': 20,
                                     'valid_min': 0},
     'time': {                       'long_name': u'time',
                                     'standard_name': u'time',
-                                    'units': u'seconds since 1980-1-6 0:0:0'},
+                                    'units': u'seconds since 1980-1-6 0:0:0',
+                                    'calendar': 'standard'},
 
     'time_stamp': {                 'long_name': u'ISO_8601_UTC_time_string'},
 
@@ -93,7 +94,7 @@ geolocation_attributes = OrderedDict(**{
                                     'standard_name': u'platform_roll_angle status_flag'}})
 
 flir01a_sm_variables = OrderedDict(**{
-    'radiance':   {'data_type': 'uint16',  'dimension': ('time', 'scan', 'raster')}
+    'radiance':   {'data_type': 'uint16',  'dimension': ('time', 'scan', 'raster'), 'fill_value': 999}
         })
 
 flir01a_sm_include = OrderedDict(**{
@@ -135,7 +136,6 @@ flir01a_sm_include_attributes = ('R', 'FrameRate', 'MaxRadiance', 'MinRadiance',
 def get_flir01a_attr(record):
     sm_attributes_base = OrderedDict(**{
         'radiance': {   'long_name': 'flir_radiance_counts_at_sensor',
-                        'standard_name': 'radiance',
                         'units': 'counts [n]',
                         'valid_max': record.MaxCounts,
                         'valid_min': record.MinCounts,
