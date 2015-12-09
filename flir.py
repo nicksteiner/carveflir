@@ -443,17 +443,14 @@ class Flight(Base):
     @property
     def geolocation(self):
         return self._geolocation
-        geolocation_frame = DataFrame.from_records(record_array)
-        us_array, s_array = np.modf(self.data_array['time'])
-        index_ = DADS_TIME_OFFSET + s_array.astype('timedelta64[s]') + (us_array * 1e6).astype('timedelta64[us]')
-        geolocation_frame.index = index_
-        self._geolocation = geolocation_frame
 
     def set_geolocation(self):
         record_array = self.data_array
         geolocation_frame = DataFrame.from_records(record_array)
         us_array, s_array = np.modf(self.data_array['time'])
-        index_ = DADS_TIME_OFFSET + s_array.astype('timedelta64[s]') + (us_array * 1e6).astype('timedelta64[us]')
+        index_ = DADS_TIME_OFFSET.astype('datetime64[us]') + \
+                     s_array.astype('timedelta64[s]').astype('timedelta64[us]') + \
+                     (us_array * 1e6).astype('timedelta64[us]')
         geolocation_frame.index = index_
         self._geolocation = geolocation_frame
 
