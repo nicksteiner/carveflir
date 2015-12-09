@@ -16,6 +16,7 @@ import copy
 import string
 import datetime
 import pickle
+import logging
 from contextlib import contextmanager
 from optparse import OptionParser
 
@@ -87,6 +88,18 @@ TS2DT = lambda x: datetime.datetime.strptime(x, '%Y-%m-%dT%H:%M:%S.%fZ')
 FLOAT_TIME_OFFSET = np.array(['1980-01-06T00:00:00+0000'], dtype='datetime64[s]').astype('double')
 DADS_TIME_OFFSET = np.array(['1980-01-06'], dtype='datetime64[D]')
 DF2DADS = lambda index: np.array(index, dtype='datetime64[us]').astype('datetime64[s]').astype('double') - FLOAT_TIME_OFFSET
+
+
+'''
+----------------------------------
+Logging
+----------------------------------
+'''
+
+logging.basicConfig(level=logging.INFO, filename='flir.log',
+                    format='%(asctime)s %(name)-12s %(levelname)-8s %(message)s',
+                    datefmt='%m-%d %H:%M')
+
 
 '''
 ----------------------------------
@@ -398,6 +411,7 @@ class Flight(Base):
     @staticmethod
     def read_dads_attributes(dads_file):
         dads_metadata = {}
+        Flight.test_file(dads_file)
         with Dataset(dads_file, 'r') as ncdf_obj:
             for att, metadata_function in Flight._dads_attributes.iteritems():
                 dads_metadata[att] = metadata_function(ncdf_obj)
@@ -407,6 +421,16 @@ class Flight(Base):
 
     def __repr__(self):
         return '<FLIR-{};{}>'.format(self.FlightID, self.StartDate)
+
+    @staticmethod
+    def test_file(dads_file):
+        try:
+            test_ = Dataset(dads_file, 'r')
+            test_.close()
+        except Exception as e:
+            logging.error('Corrupt netcdf file: {}'.format(dads_file))
+            raise Exception('Corrupt netcdf file: {}'.format(dads_file))
+
 
     @property
     def data_array(self):
@@ -533,16 +557,25 @@ class Record(Base):
             self.FlightID = get_flightid_bydate(date_obj) # first guess
         except:
             pass
-
+        # set metadata
         record_metadata = Record.parse_record_file(record_file, SfmovMetadata())
         self.set_record_metadata(record_metadata)
         self.set_metadata()
         self.set_index()
-
-        self.FlightDate = self.index[0].date()
-        self.FlightID = get_flight_bytime(self.index[0]).FlightID # final guess by
-
-
+        try:
+            assert self.index is not None
+            self.FlightDate = self.index[0].date()
+        except:
+            logging.error('Metadata ({}) not found or corrupt: {}'. \
+                          format(self.ReduceFile, self.RecordName))
+        # find record-object by time
+        try:
+            flight = get_flight_bytime(self.index[0])
+            assert flight is not None
+            self.FlightID = flight.FlightID
+        except :
+            logging.error('Cannot find DADS file for {}, date: {}'. \
+                          format(self.FlightDate, self.RecordName))
         if load:
             self.load_array()
 
@@ -570,7 +603,8 @@ class Record(Base):
             assert hasattr(self, 'reduce_frame')
             str2dt = lambda t: to_datetime(str(self.FlightDate.year) + t, format='%Y%j:%H:%M:%S.%f')
             self._index = [str2dt(t) for t in self.reduce_frame.Time]
-        except:
+        except Exception as e:
+            logging.error('Index not set: {}'.format(self.RecordName))
             print('reduce frame not found !!')
             self._index = None
 
@@ -614,11 +648,20 @@ class Record(Base):
             if os.path.exists(self.inc_file_path):
                 include_metadata = Record.parse_record_file(self.inc_file_path, IncludeMetadata())
                 self.set_record_metadata(include_metadata)
+            else:
+                logging.error('Missing Include file: {}'.format(self.inc_file_path))
+        else:
+            logging.error('Corrupt SFMOV Header: {}'.format(self.sfmov_file_path))
+
         if hasattr(record_metadata, 'REFile'):
             if os.path.exists(self.pod_file_path):
                 reduce_metadata = Record.parse_record_file(self.pod_file_path, ReduceMetadata())
                 self.set_record_metadata(reduce_metadata)
                 self.set_reduce_frame()
+            else:
+                logging.error('Missing Reference file: {}'.format(self.pod_file_path))
+        else:
+            logging.error('Corrupt SFMOV Header: {}'.format(self.sfmov_file_path))
 
     @staticmethod
     def parse_header_line(line):
@@ -959,8 +1002,7 @@ class _GeneralNetCDFFormat():
     comment = 'See associated README file.'
     Conventions = 'CF-1.6'
     instrument = 'FLIR SC8200; 25 mm lens [#23898-000]'
-    general_att_names = ('institution', 'source', 'history', 'references', 'comment', 'Conventions', 'instrument',
-                         'instrument_full')
+    general_att_names = ('institution', 'source', 'history', 'references', 'comment', 'Conventions', 'instrument')
     file_ext = 'nc'
 
     @property
@@ -974,7 +1016,7 @@ class _GeneralNetCDFFormat():
 
     @property
     def folder(self):
-        return os.path.join(_PATH, 'dat', self.processing_level, self.short_name, self.data_bounds[0].strftime('%Y%m%d'))
+        return os.path.join(_PATH, 'dat', self.short_name, self.data_bounds[0].strftime('%Y%m%d'))
 
     @property
     def file_path(self):
@@ -1043,7 +1085,7 @@ class FLIR01A(_GeneralNetCDFFormat):
     title = 'CARVE FLIR Level 1A Radiance Counts at the Sensor'
     #name_fmt = 'carve_{short_name}_{build_id}_{flight_date}_{record_number:06g}_{production_date_time}'
 
-    name_fmt = 'carve_{short_name}_{build_id}_{flight_date}_{record_number}_{production_date_time}'
+    name_fmt = 'carve_{short_name}_{build_id}_{flight_date}_{record_number}_{production_date_time_fname}'
     algorithm_version = '1r0'
 
     product_att_names = ('product_source','ancillary_file_source', 'collection_label',
@@ -1061,6 +1103,7 @@ class FLIR01A(_GeneralNetCDFFormat):
         self.data_start_time = self.data_bounds[0].strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
         self.data_stop_time = self.data_bounds[1].strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
         self.production_date_time = datetime.datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
+        self.production_date_time_fname = ''.join(c for c in self.production_date_time if c not in '-:.ZT')
         self.flight_date = self.data_bounds[0].strftime('%Y%m%d')
 
     def write_geolocation(self, ncfile, dim_vars):
@@ -1157,6 +1200,7 @@ def write_FLIR01A(overwrite=False, year=None, month=None, day=None):
                     else:
                         print('{} Exists; skipping ...'.format(record_))
             except Exception as e:
+                logging.error('Failed netcdf write: {}'.format(record_))
                 print('Failed {}...'.format(record_))
                 print(e)
 
@@ -1192,10 +1236,11 @@ def update_flights():
                 flight_obj = Flight(flight)
                 session.merge(flight_obj)
                 session.commit()
-            except Exception as e: # Should add some logging info
+            except Exception as e:
+                logging.error('Failed Flight update: {}'.format(flight))
+                logging.error(e)
                 print(Exception('error for : {}'.format(flight)))
                 print(e)
-                continue
         print(flight)
 
 def update_records():
@@ -1212,9 +1257,10 @@ def update_records():
                 session.commit()
                 print('Record added: {}'.format(record_obj))
             except Exception as e:
+                logging.error('Failed Record update: {}'.format(record))
+                logging.error(e)
                 print(Exception('error for : {}'.format(record)))
                 print(e)
-                continue
         print(record)
 
 def main():
