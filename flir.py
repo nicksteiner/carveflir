@@ -1213,6 +1213,10 @@ Data Management
 ----------------------------------
 '''
 
+
+def init_database():
+    metadata.create_all()
+
 def write_database():
     metadata.drop_all()
     metadata.create_all()
