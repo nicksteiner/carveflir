@@ -1119,8 +1119,7 @@ class FLIR01A(_GeneralNetCDFFormat):
             var_info = fliratt.geolocation_variables[var_name]
             att_ = fliratt.geolocation_attributes[var_name]
             #print(var_info['fill_value']) #  debug
-            nc_var = geo_group.createVariable(var_name, var_info['data_type'], (var_info['dimension'], ), zlib=True,
-                                              fill_value=var_info['fill_value'])
+            nc_var = geo_group.createVariable(var_name, var_info['data_type'], (var_info['dimension'], ), zlib=True,  fill_value=var_info['fill_value'])
             if '_error' not in var_name:
                 # set the data
                 nc_var[:] = geo_data[var_name].values

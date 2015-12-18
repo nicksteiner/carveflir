@@ -17,7 +17,7 @@ geolocation_variables = OrderedDict(**{
      'roll':                        {'data_type': 'single',  'dimension': 'time', 'fill_value': -999.9},
      'roll_qc':                     {'data_type': 'uint8',  'dimension': 'time',  'fill_value': 255},
      'time':                        {'data_type': 'double',  'dimension': 'time', 'fill_value': -999.9},
-     'time_stamp':                  {'data_type': 'string', 'dimension':  'time',  'fill_value': None}})
+     'time_stamp':                  {'data_type': str, 'dimension':  'time',  'fill_value': None}})
 
 geolocation_attributes = OrderedDict(**{
     'center_lat': {                'long_name': u'aircraft_center_latitude',
