@@ -93,3 +93,33 @@ def test_write_record():
     record.set_geolocation(flight)
     nc = flir.FLIR01A(record)
     nc.write()
+
+if __name__ == '__main__':
+    print('test 1')
+    test_init_database()
+    print('test 2')
+    test_create_session()
+    print('test 3')
+    test_get_flir()
+    print('test 4')
+    test_file_list()
+    print('test 5')
+    test_create_flight()
+    print('test 6')
+    test_create_record()
+    print('test 7')
+    test_record_load()
+    print('test 8')
+    test_update_records()
+    print('test 9')
+    test_get_flight()
+    print('test 10')
+    test_get_record()
+    print('test 11')
+    test_set_record_geolocation()
+    print('test 12')
+    test_write_record()
+    print('done')
+
+	
+
