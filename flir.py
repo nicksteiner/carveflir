@@ -1163,6 +1163,8 @@ class FLIR01A(_GeneralNetCDFFormat):
             nc_var[:] = sc_data[var_name]
             # set the variables
             for key, att_values in att_.iteritems():
+                if att_values is None:
+                    att_values = ''
                 setattr(nc_var, key, att_values)
         return sc_group
 
