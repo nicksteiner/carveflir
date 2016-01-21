@@ -1,0 +1,16 @@
+# netCDF
+*.nc
+
+# FLIR Binaries
+*.sfmov
+*.inc
+*.pod
+*.zip
+*.gz
+
+# Database Files
+*.db
+
+# Data Path
+dat/
+
