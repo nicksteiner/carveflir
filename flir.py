@@ -563,16 +563,16 @@ class Record(Base):
             assert self.index is not None
             self.FlightDate = self.index[0].date()
         except:
-            logging.error('Metadata ({}) not found or corrupt: {}'. \
-                          format(self.ReduceFile, self.RecordName))
+            logging.error('{}: Metadata not found or corrupt: {}'. \
+                          format(self.RecordName, self.ReduceFile))
         # find record-object by time
         try:
             flight = get_flight_bytime(self.index[0])
             assert flight is not None
             self.FlightID = flight.FlightID
         except :
-            logging.error('Cannot find DADS file for {}, date: {}'. \
-                          format(self.FlightDate, self.RecordName))
+            logging.error('{}: Cannot find DADS file, date: {}'. \
+                          format(self.RecordName, self.FlightDate))
         if load:
             self.load_array()
 
@@ -597,13 +597,70 @@ class Record(Base):
 
     def set_index(self):
         try:
-            assert hasattr(self, 'reduce_frame')
-            str2dt = lambda t: to_datetime(str(self.FlightDate.year) + t, format='%Y%j:%H:%M:%S.%f')
-            self._index = [str2dt(t) for t in self.reduce_frame.Time]
+            try:
+                assert hasattr(self, 'reduce_frame')
+            except:
+                logging.error('{}: Missing reduce frame file ({})'.format(self.RecordName, self.ReduceFile))
+                raise Exception('Missing reduce frame file (.REF)')
+            try:
+                str2dt = lambda t: to_datetime(str(self.FlightDate.year) + t, format='%Y%j:%H:%M:%S.%f')
+                raw_index = [str2dt(t) for t in self.reduce_frame.Time]
+            except:
+                logging.warning('{}: Corrupt time in REF file {}, correcting (forward-fill at 1 Htz)'.format(self.RecordName, self.ReduceFile))
+                # use simple forward fill
+                raw_index = []
+                for time_str in  self.reduce_frame.Time:
+                    try:
+                        raw_index.append(str2dt(time_str))
+                    except:
+                        # assume 1 Htz
+                        try:
+                            assert time_str != time_str[0]
+                            raw_index.append(raw_index[-1] + np.timedelta64(1, 's'))
+                        except:
+                            # use second value
+                            raw_index.append(str2dt(self.reduce_frame.Time[1]) - np.timedelta64(1, 's'))
+            try:
+                discontinuity = np.where(np.diff(raw_index) > np.timedelta64(1, 'D'))[0]
+                if discontinuity.any():
+                    try:
+                        assert 0 not in discontinuity
+                        try:
+                            assert len(raw_index) not in discontinuity
+                        except:
+                            logging.error('{}: Yikes check code. Trying backwards correction(back-fill at 1 Htz)'.format(self.RecordName))
+                            raise Exception()
+                        logging.warning('{}: Discontinuous time values found . Trying correction (forward-fill at 1 Htz)'.format(self.RecordName))
+                        next_ = -1 # forward-fill
+                    except:
+                        logging.warning('{}: Discontinuous time values found at first position, correcting (back-fill at 1 Htz)'.format(self.RecordName))
+                        next_ = 1 # back-fill
+                    cnt = 0
+                    while discontinuity.any():
+                        for diff_pos in discontinuity:
+                            if abs(raw_index[diff_pos] - raw_index[diff_pos - 1]) > np.timedelta64(1, 'D'):
+                                # negative discontinuity
+                                discontinuity_position = diff_pos
+                            else: # positive discontinuity
+                                discontinuity_position = diff_pos + 1
+                            raw_index[discontinuity_position] = raw_index[discontinuity_position + next_]  + np.timedelta64(1, 's') * -next_
+                        discontinuity = np.where(np.diff(raw_index) > np.timedelta64(1, 'D'))[0]
+                        cnt += 1
+                        if cnt > 10: # should not be 10 in a row missing.
+                            break
+                    try:
+                        assert not discontinuity.any()
+                    except:
+                        logging.error('{}: Fill failed.'.format(self.RecordName))
+                        raise Exception()
+                self._index = raw_index
+            except Exception as e:
+                logging.error('{}: Index correction error: {}'.format(self.RecordName, e))
+
         except Exception as e:
-            logging.error('Index not set: {}'.format(self.RecordName))
-            print('reduce frame not found !!')
+            logging.error('{}: Index not set.'.format(self.RecordName))
             self._index = None
+
 
     @property
     def sfmov_file_path(self):
@@ -646,9 +703,9 @@ class Record(Base):
                 include_metadata = Record.parse_record_file(self.inc_file_path, IncludeMetadata())
                 self.set_record_metadata(include_metadata)
             else:
-                logging.error('Missing Include file: {}'.format(self.inc_file_path))
+                logging.error('{}: Missing Include file: {}'.format(self.RecordName, self.inc_file_path))
         else:
-            logging.error('Corrupt SFMOV Header: {}'.format(self.sfmov_file_path))
+            logging.error('{}: Corrupt SFMOV Header: {}'.format(self.RecordName, self.sfmov_file_path))
 
         if hasattr(record_metadata, 'REFile'):
             if os.path.exists(self.pod_file_path):
@@ -656,9 +713,9 @@ class Record(Base):
                 self.set_record_metadata(reduce_metadata)
                 self.set_reduce_frame()
             else:
-                logging.error('Missing Reference file: {}'.format(self.pod_file_path))
+                logging.error('{}: Missing Reference file: {}'.format(self.RecordName, self.pod_file_path))
         else:
-            logging.error('Corrupt SFMOV Header: {}'.format(self.sfmov_file_path))
+            logging.error('{}: Corrupt SFMOV Header: {}'.format(self.RecordName, self.sfmov_file_path))
 
     @staticmethod
     def parse_header_line(line):
@@ -824,8 +881,19 @@ class Record(Base):
             raise(e)
         flight_geo = flight.geolocation.copy()
         # Check if record is within flight geolocation
-        assert flight_geo.index[0] < self.index[0]
-        assert flight_geo.index[-1] > self.index[-1]
+        try:
+            assert flight_geo.index[0] < self.index[0]
+        except :
+            error_ = '{}: FLIR/DADS time mismatch; DADS Start {}, FLIR Start: {}'.format(self.RecordName, flight_geo.index[0], self.index[0])
+            logging.error(error_)
+            raise ValueError(error_)
+        try:
+            assert flight_geo.index[-1] > self.index[-1]
+        except :
+            error_ = '{}: FLIR/DADS time mismatch; DADS End {}, FLIR End: {}'.format(self.RecordName, flight_geo.index[0], self.index[0])
+            logging.error(error_)
+            raise ValueError(error_)
+
         for i in self.index:
             flight_geo.loc[i] = np.nan
         flight_geo.sort_index(inplace=True)
@@ -1163,6 +1231,8 @@ class FLIR01A(_GeneralNetCDFFormat):
             nc_var[:] = sc_data[var_name]
             # set the variables
             for key, att_values in att_.iteritems():
+                if att_values is None:
+                    att_values = ''
                 setattr(nc_var, key, att_values)
         return sc_group
 
